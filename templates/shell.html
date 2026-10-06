@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+__FONTS__
+
+__CSS_VARS__
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; overflow: hidden; background: var(--paper); color: var(--ink);
+       font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+
+/* The page is exactly one viewport. A narrow rail carries the reading matter
+   and the controls; the scene takes every pixel that is left. Nothing below
+   the fold means nothing a viewer has to find by scrolling mid-demonstration,
+   which matters when the thing being demonstrated is a rotatable scene. */
+.app { height: 100dvh; display: grid; grid-template-columns: minmax(19rem, 23rem) 1fr; }
+
+.rail { min-height: 0; overflow-y: auto; border-right: 1px solid var(--rule);
+        padding: 1.5rem 1.35rem 1.3rem; display: flex; flex-direction: column;
+        gap: 1.15rem; }
+.stage { min-width: 0; min-height: 0; display: grid; grid-template-rows: 1fr auto;
+         gap: .5rem; padding: 1rem 1.2rem 1rem; }
+
+.eyebrow { font-family: var(--font-mono); font-size: .68rem; letter-spacing: .09em;
+           text-transform: uppercase; color: var(--muted); margin: 0 0 .45rem; }
+h1 { font-size: 1.42rem; font-weight: 600; letter-spacing: -.01em; line-height: 1.2;
+     margin: 0 0 .55rem; }
+.lede { font-size: .88rem; line-height: 1.55; color: #35393d; margin: 0; }
+
+/* The scene is absolutely positioned inside a grid cell that is already
+   sized, so plotly measures the cell rather than growing it. A plot that
+   reports its own height inside a flexible row expands on every redraw. */
+.scope { position: relative; min-height: 0; border: 1px solid var(--rule);
+         border-radius: 4px; background: #fff; overflow: hidden; }
+#plot { position: absolute; inset: 0; }
+.tag { position: absolute; top: .7rem; left: .9rem; font-family: var(--font-mono);
+       font-size: .72rem; letter-spacing: .08em; text-transform: uppercase;
+       color: var(--muted); pointer-events: none; max-width: 60%; }
+.hint { position: absolute; right: .9rem; bottom: .7rem; font-family: var(--font-mono);
+        font-size: .68rem; color: var(--muted); pointer-events: none; }
+
+.controls { display: flex; flex-direction: column; gap: .95rem;
+            padding: 1.05rem 0 0; border-top: 1px solid var(--rule); }
+.field { display: flex; flex-direction: column; gap: .4rem; }
+.flabel { font-family: var(--font-mono); font-size: .66rem; letter-spacing: .09em;
+          text-transform: uppercase; color: var(--muted); }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 3px;
+       overflow: hidden; background: #fff; }
+.seg button { appearance: none; border: 0; background: transparent; cursor: pointer;
+              flex: 1 1 0; font-family: var(--font-sans); font-size: .82rem;
+              padding: .4rem .6rem; color: #44484c; white-space: nowrap;
+              border-right: 1px solid var(--rule); }
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+.seg button:hover:not([aria-pressed="true"]) { background: #eceeea; }
+.field.muted { opacity: .35; pointer-events: none; }
+
+.go { appearance: none; cursor: pointer; border: 1px solid var(--blind-panel);
+      background: var(--blind-panel); color: #fff; border-radius: 3px;
+      font-family: var(--font-sans); font-size: .84rem; font-weight: 500;
+      padding: .45rem 1rem; text-align: center; }
+.go:hover { filter: brightness(1.07); }
+.go[disabled] { opacity: .35; cursor: default; filter: none; }
+.go::after { content: "\00a0\2192"; }
+
+.scale { font-family: var(--font-mono); font-size: .7rem; color: var(--muted);
+         margin: 0; line-height: 1.4; }
+.ladder { font-family: var(--font-mono); font-size: .7rem; color: var(--muted);
+          margin: 0; padding-top: 1.05rem; border-top: 1px solid var(--rule);
+          line-height: 1.55; }
+
+/* Collapsed, the notes cost one line. The lede carries what a viewer needs to
+   start; this is for the one who wants the rest without losing the scene. */
+.notes { margin-top: auto; padding-top: 1.05rem; border-top: 1px solid var(--rule); }
+.notes > summary { cursor: pointer; list-style: none; font-family: var(--font-mono);
+                   font-size: .68rem; letter-spacing: .09em; text-transform: uppercase;
+                   color: var(--muted); }
+.notes > summary::-webkit-details-marker { display: none; }
+.notes > summary::after { content: "\00a0+"; }
+.notes[open] > summary::after { content: "\00a0\2212"; }
+.notes > summary:hover { color: var(--ink); }
+.notes p { margin: .8rem 0 0; font-size: .83rem; line-height: 1.55; color: #35393d; }
+.notes b { font-weight: 600; }
+
+/* A 720-pixel-tall window leaves the rail about fifteen pixels short, which
+   is the kind of gap that produces a scrollbar for no visible reason.
+   Measured at 1280x720; the scene itself is unaffected. */
+@media (max-height: 48rem) {
+  .rail { padding-top: 1.15rem; gap: .85rem; }
+  .controls { gap: .75rem; padding-top: .85rem; }
+  .ladder { padding-top: .85rem; }
+  .notes { padding-top: .85rem; }
+}
+
+/* Below this width a rail and a scene cannot both be legible, so the layout
+   stacks and the page is allowed to scroll. A phone scrolls; a projector and
+   a laptop, which is what this demo is shown on, do not. */
+@media (max-width: 54rem) {
+  body { overflow: auto; }
+  .app { height: auto; grid-template-columns: 1fr; }
+  .rail { overflow: visible; border-right: 0; border-bottom: 1px solid var(--rule); }
+  .stage { padding: 1rem 1.2rem 2rem; }
+  .scope { height: 68vh; }
+  .notes { margin-top: 0; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div>
+      <p class="eyebrow">Thalanga VHMS · Queensland · blind test</p>
+      <h1>__TITLE__</h1>
+      <p class="lede">__LEDE__</p>
+    </div>
+
+    <div class="controls">
+      <div class="field">
+        <span class="flabel">Showing</span>
+        <div class="seg" id="segAct" role="group" aria-label="Act"></div>
+      </div>
+      <div class="field" id="metalField">
+        <span class="flabel">Metal</span>
+        <div class="seg" id="segMetal" role="group" aria-label="Metal"></div>
+      </div>
+      <div class="field">
+        <span class="flabel">Ground</span>
+        <div class="seg" id="segFill" role="group" aria-label="Ground"></div>
+      </div>
+      <div class="field">
+        <span class="flabel">The blind panel</span>
+        <button class="go" id="go" type="button" disabled>Open the estimate</button>
+      </div>
+    </div>
+
+    <p class="ladder" id="ladder">__LADDER__</p>
+
+    <details class="notes">
+      <summary>What you are looking at</summary>
+      <p>Every position is a drilled assay interval, placed by downhole survey.
+         Colour is grade on a log scale, pale to dark, one metal at a time.
+         Grades run from under a thousandth of a percent to nearly fifty, so a
+         linear scale would put a barren sample and an ore sample in the same
+         shade.</p>
+      <p>The ground above them is the surveyed terrain mesh. It opens as a
+         wireframe because a solid surface hides everything beneath it.</p>
+      <p>Switch to <b>the blind panel</b> and the samples recolour. The pink
+         prism is a block of ground set aside before any modelling began. The
+         estimate was built from the grey positions only and never saw an
+         assay inside the pink.</p>
+      <p>Click the prism, or the button above, to go inside it and see how
+         close the estimate came.</p>
+    </details>
+  </aside>
+
+  <main class="stage">
+    <div class="scope">
+      <div id="plot"></div>
+      <div class="tag" id="tag"></div>
+      <div class="hint" id="hint">drag to orbit · scroll to zoom</div>
+    </div>
+    <p class="scale">__SCALE__</p>
+  </main>
+</div>
+
+<script type="application/json" id="payload">__PAYLOAD__</script>
+<script>__PLOTLYJS__</script>
+<script>
+(function () {
+  "use strict";
+  var RAW = JSON.parse(document.getElementById("payload").textContent);
+  var IDX = RAW.traces, F = RAW.flight, METALS = RAW.metals;
+  var gd = document.getElementById("plot");
+  var state = { act: 0, metal: 0, filled: false, flying: false };
+
+  var ACTS = [
+    { label: "The deposit", tag: "Grade by position" },
+    { label: "The blind panel", tag: "Informing data and the withheld block" }
+  ];
+
+  function metalIndices() { return METALS.map(function (m) { return IDX.metals[m]; }); }
+  function act2Indices() { return [IDX.informing, IDX.panel, IDX.boxMesh, IDX.boxLines]; }
+
+  // ---- visibility -------------------------------------------------------
+  function applyAct() {
+    var deposit = state.act === 0;
+    var vis = METALS.map(function (_, i) { return deposit && i === state.metal; })
+                    .concat([!deposit, !deposit, !deposit, !deposit]);
+    Plotly.restyle(gd, { visible: vis }, metalIndices().concat(act2Indices()));
+    document.getElementById("tag").textContent = ACTS[state.act].tag;
+    document.getElementById("metalField").classList.toggle("muted", !deposit);
+    document.getElementById("go").disabled = deposit;
+    document.getElementById("hint").textContent = deposit
+      ? "drag to orbit · scroll to zoom"
+      : "drag to orbit · click the pink block to go inside it";
+  }
+
+  function applyFill() {
+    var style = state.filled ? RAW.filled : RAW.wire;
+    var args = {};
+    Object.keys(style).forEach(function (k) { args[k] = [style[k]]; });
+    // The wireframe is a single grey, so its elevation scale would describe a
+    // colouring that is not on screen.
+    args["showscale"] = [state.filled];
+    Plotly.restyle(gd, args, [IDX.dem]);
+  }
+
+  // ---- the flight -------------------------------------------------------
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function ease(t) { return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; }
+
+  function fly() {
+    if (state.flying) return;
+    state.flying = true;
+    var cam = gd._fullLayout.scene.camera;
+    var e0 = [cam.eye.x, cam.eye.y, cam.eye.z];
+    var c0 = [cam.center.x, cam.center.y, cam.center.z];
+    var e1 = [F.eye.x, F.eye.y, F.eye.z];
+    var c1 = [F.centre.x, F.centre.y, F.centre.z];
+    var a0 = F.aspectFrom, a1 = F.aspectTo;
+    var t0 = performance.now();
+
+    document.getElementById("tag").textContent = "Entering the blind panel";
+    function step(now) {
+      var t = Math.min((now - t0) / F.durationMs, 1), k = ease(t);
+      Plotly.relayout(gd, {
+        "scene.camera.eye": { x: lerp(e0[0], e1[0], k), y: lerp(e0[1], e1[1], k),
+                              z: lerp(e0[2], e1[2], k) },
+        "scene.camera.center": { x: lerp(c0[0], c1[0], k), y: lerp(c0[1], c1[1], k),
+                                 z: lerp(c0[2], c1[2], k) },
+        // The vertical relaxes toward true scale on the way in, so the block
+        // is not drawn one way here and another way on arrival.
+        "scene.aspectratio": { x: lerp(a0.x, a1.x, k), y: lerp(a0.y, a1.y, k),
+                               z: lerp(a0.z, a1.z, k) }
+      });
+      if (t < 1) requestAnimationFrame(step);
+      else location.href = "panel.html#eye=" + e1.map(function (v) {
+        return v.toFixed(4);
+      }).join(",");
+    }
+    requestAnimationFrame(step);
+  }
+
+  // ---- controls ---------------------------------------------------------
+  function seg(host, labels, onPick, pressed) {
+    host.innerHTML = "";
+    labels.forEach(function (label, i) {
+      var b = document.createElement("button");
+      b.type = "button"; b.textContent = label;
+      b.setAttribute("aria-pressed", String(i === pressed()));
+      b.addEventListener("click", function () {
+        onPick(i);
+        Array.prototype.forEach.call(host.children, function (c, j) {
+          c.setAttribute("aria-pressed", String(j === pressed()));
+        });
+      });
+      host.appendChild(b);
+    });
+  }
+
+  function wire() {
+    seg(document.getElementById("segAct"),
+        ACTS.map(function (a) { return a.label; }),
+        function (i) { state.act = i; applyAct(); },
+        function () { return state.act; });
+    seg(document.getElementById("segMetal"), METALS,
+        function (i) { state.metal = i; applyAct(); },
+        function () { return state.metal; });
+    seg(document.getElementById("segFill"), ["Wireframe", "Filled"],
+        function (i) { state.filled = i === 1; applyFill(); },
+        function () { return state.filled ? 1 : 0; });
+    document.getElementById("go").addEventListener("click", fly);
+
+    // Clicking the block is the other way in. The mesh is the target rather
+    // than the outline: plotly resolves 3D picking against drawn faces, and a
+    // four-pixel line is nearly impossible to hit in a rotated scene.
+    gd.on("plotly_click", function (d) {
+      if (!d.points || !d.points.length) return;
+      var c = d.points[0].curveNumber;
+      if (c === IDX.boxMesh || c === IDX.boxLines) {
+        if (state.act !== 1) { state.act = 1; applyAct(); wireAgain(); }
+        fly();
+      }
+    });
+  }
+
+  function wireAgain() {
+    Array.prototype.forEach.call(document.getElementById("segAct").children,
+      function (c, j) { c.setAttribute("aria-pressed", String(j === state.act)); });
+  }
+
+  // ---- camera returning from the panel ----------------------------------
+  function applyHash() {
+    var m = /eye=(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)/.exec(location.hash || "");
+    if (m) Plotly.relayout(gd, { "scene.camera.eye": { x: +m[1], y: +m[2], z: +m[3] } });
+  }
+
+  // The build fixes a height so the figure stands alone if it is ever opened
+  // on its own. Here the grid cell decides, and a fixed height would either
+  // overflow the viewport or leave a band of paper under the scene.
+  var layout = RAW.figure.layout;
+  delete layout.height;
+  delete layout.width;
+  layout.autosize = true;
+
+  Plotly.newPlot(gd, RAW.figure.data, layout,
+                 { displayModeBar: false, responsive: true }).then(function () {
+    wire();
+    applyAct();
+    applyFill();
+    applyHash();
+    // responsive:true watches the window. The rail is a fixed width, so the
+    // window is the only thing that resizes the cell — except when the notes
+    // open on a narrow layout, which the observer catches.
+    if (window.ResizeObserver) {
+      new ResizeObserver(function () { Plotly.Plots.resize(gd); })
+        .observe(gd.parentNode);
+    }
+  });
+  window.addEventListener("hashchange", applyHash);
+})();
+</script>
+</body>
+</html>

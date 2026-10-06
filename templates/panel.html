@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+__FONTS__
+
+__CSS_VARS__
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; overflow: hidden; background: var(--paper); color: var(--ink);
+       font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+
+/* Same two-column frame as the deposit page, so the transition between them
+   moves the scene and nothing else. Here the stage carries the legend and the
+   readout under the scene: both answer questions about what is on screen, and
+   a reader who has to scroll to find the numbers has lost the comparison. */
+.app { height: 100dvh; display: grid; grid-template-columns: minmax(19rem, 23rem) 1fr; }
+
+.rail { min-height: 0; overflow-y: auto; border-right: 1px solid var(--rule);
+        padding: 1.5rem 1.35rem 1.3rem; display: flex; flex-direction: column;
+        gap: 1.15rem; }
+.stage { min-width: 0; min-height: 0; display: grid; grid-template-rows: 1fr auto auto;
+         gap: .55rem; padding: 1rem 1.2rem 1rem; }
+
+/* --- header ---------------------------------------------------------- */
+.eyebrow { font-family: var(--font-mono); font-size: .68rem; letter-spacing: .09em;
+           text-transform: uppercase; color: var(--muted); margin: 0 0 .45rem; }
+h1 { font-size: 1.42rem; font-weight: 600; letter-spacing: -.01em; line-height: 1.2;
+     margin: 0 0 .55rem; }
+.lede { font-size: .88rem; line-height: 1.55; color: #35393d; margin: 0; }
+.back { display: inline-block; margin-bottom: .95rem; font-size: .78rem;
+        font-family: var(--font-mono); color: var(--muted); text-decoration: none; }
+.back:hover { color: var(--ink); }
+.back::before { content: "\2190\00a0"; }
+
+/* --- the scene ------------------------------------------------------- */
+.scope { position: relative; min-height: 0; border: 1px solid var(--rule);
+         border-radius: 4px; background: #fff; overflow: hidden; }
+#plot { position: absolute; inset: 0; }
+.tag { position: absolute; top: .7rem; left: .9rem; font-family: var(--font-mono);
+       font-size: .72rem; letter-spacing: .08em; text-transform: uppercase;
+       color: var(--muted); pointer-events: none; }
+.hint { position: absolute; right: .9rem; bottom: .7rem; font-family: var(--font-mono);
+        font-size: .68rem; color: var(--muted); pointer-events: none; }
+
+/* --- legend ---------------------------------------------------------- */
+.legend { display: flex; flex-wrap: wrap; gap: .1rem 1.1rem; align-items: center;
+          font-family: var(--font-mono); font-size: .72rem; color: #44484c;
+          margin: 0; }
+.sw { display: inline-flex; align-items: center; gap: .36rem; }
+.chip { width: .72rem; height: .72rem; border-radius: 2px; display: inline-block; }
+.legend .unit { color: var(--muted); }
+
+/* --- controls -------------------------------------------------------- */
+.controls { display: flex; flex-direction: column; gap: .95rem;
+            padding: 1.05rem 0 0; border-top: 1px solid var(--rule); }
+.field { display: flex; flex-direction: column; gap: .4rem; }
+.flabel { font-family: var(--font-mono); font-size: .66rem; letter-spacing: .09em;
+          text-transform: uppercase; color: var(--muted); }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 3px;
+       overflow: hidden; background: #fff; }
+.seg button { appearance: none; border: 0; background: transparent; cursor: pointer;
+              flex: 1 1 0; font-family: var(--font-sans); font-size: .82rem;
+              padding: .4rem .6rem; color: #44484c; white-space: nowrap;
+              border-right: 1px solid var(--rule); }
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+.seg button:hover:not([aria-pressed="true"]) { background: #eceeea; }
+input[type=range] { width: 100%; margin: 0; accent-color: var(--ink); }
+.cutline { font-family: var(--font-mono); font-size: .7rem; color: var(--muted);
+           line-height: 1.4; }
+.cutval { color: var(--ink); }
+.field.muted { opacity: .35; pointer-events: none; }
+
+/* --- readout --------------------------------------------------------- */
+/* Four cells across the foot of the scene rather than down the rail. The
+   comparison the page exists for is between views of the same ground, so the
+   numbers have to be readable in one glance from the scene they describe. */
+.readout { display: grid; gap: .4rem 1.6rem; padding-top: .7rem;
+           grid-template-columns: repeat(4, minmax(0, 1fr));
+           border-top: 1px solid var(--rule); }
+.cell { min-width: 0; }
+.cell .flabel { display: block; margin-bottom: .22rem; }
+.big { display: block; font-family: var(--font-mono); font-size: 1.28rem;
+       font-weight: 500; line-height: 1.15; }
+.sub { display: block; font-family: var(--font-mono); font-size: .68rem;
+       color: var(--muted); margin-top: .15rem; }
+.na { color: var(--rule); }
+
+/* --- notes ----------------------------------------------------------- */
+.notes { margin-top: auto; padding-top: 1.05rem; border-top: 1px solid var(--rule); }
+.notes > summary { cursor: pointer; list-style: none; font-family: var(--font-mono);
+                   font-size: .68rem; letter-spacing: .09em; text-transform: uppercase;
+                   color: var(--muted); }
+.notes > summary::-webkit-details-marker { display: none; }
+.notes > summary::after { content: "\00a0+"; }
+.notes[open] > summary::after { content: "\00a0\2212"; }
+.notes > summary:hover { color: var(--ink); }
+.notes p { margin: .8rem 0 0; font-size: .83rem; line-height: 1.55; color: #35393d; }
+.notes b { font-weight: 600; }
+
+/* Two sliders and four control groups make this rail taller than the deposit
+   page's, so a short window needs a little more taken out of it. Measured at
+   1280x720, where the untightened rail overran by about sixty pixels. */
+@media (max-height: 48rem) {
+  .rail { padding-top: 1.15rem; gap: .8rem; }
+  .lede { font-size: .82rem; line-height: 1.45; }
+  .controls { gap: .7rem; padding-top: .8rem; }
+  .notes { padding-top: .8rem; }
+  .back { margin-bottom: .6rem; }
+  .big { font-size: 1.15rem; }
+}
+
+/* Below this width the rail and the scene cannot share the screen, so the
+   layout stacks and scrolling comes back. The readout drops to two columns
+   before the labels start wrapping to three lines each. */
+@media (max-width: 54rem) {
+  body { overflow: auto; }
+  .app { height: auto; grid-template-columns: 1fr; }
+  .rail { overflow: visible; border-right: 0; border-bottom: 1px solid var(--rule); }
+  .stage { padding: 1rem 1.2rem 2rem; }
+  .scope { height: 62vh; }
+  .readout { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem 1.6rem; }
+  .notes { margin-top: 0; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div>
+      <a class="back" href="index.html" id="back">the deposit</a>
+      <p class="eyebrow">Thalanga VHMS · Queensland · blind panel</p>
+      <h1>__TITLE__</h1>
+      <p class="lede">__LEDE__</p>
+    </div>
+
+    <div class="controls">
+      <div class="field">
+        <span class="flabel">Metal</span>
+        <div class="seg" id="segEl" role="group" aria-label="Metal"></div>
+      </div>
+      <div class="field">
+        <span class="flabel">Showing</span>
+        <div class="seg" id="segView" role="group" aria-label="What is drawn"></div>
+      </div>
+      <div class="field" id="runField">
+        <span class="flabel">Realisation</span>
+        <input type="range" id="run" min="0" max="1" value="0" step="1">
+        <div class="cutline"><span id="runlab">mean of all runs</span></div>
+      </div>
+      <div class="field">
+        <span class="flabel">Cutoff grade</span>
+        <input type="range" id="cut" min="0" max="1000" value="0" step="1">
+        <div class="cutline"><span class="cutval" id="cutval">no cutoff</span>
+          · <span id="cuthint">showing every position</span></div>
+      </div>
+    </div>
+
+    <details class="notes">
+      <summary>What you are looking at</summary>
+      <p>Every position here was withheld. The estimate was built from the
+         drilling outside this block and never saw a single assay inside it,
+         so the measured view is the answer sheet.</p>
+      <p><b>Measured</b> is what the core actually assayed.
+         <b>Kriged</b> is ordinary kriging, which estimates the most likely
+         grade at each position. <b>Simulated</b> is sequential Gaussian
+         simulation, which draws grades that reproduce the variability of the
+         deposit rather than its average.</p>
+      <p>Raise the cutoff and watch the kriged view empty first. Kriging
+         minimises error position by position, and the price is a collapsed
+         grade distribution: it reports no ground at all above the grades that
+         carry a mine.</p>
+      <p>A single realisation is noisy where kriging is smooth. That is the
+         design, not a fault. Kriging answers what grade sits here; simulation
+         answers how much ground lies above a cutoff, and how sure we are.</p>
+    </details>
+  </aside>
+
+  <main class="stage">
+    <div class="scope">
+      <div id="plot"></div>
+      <div class="tag" id="tag">Measured assays</div>
+      <div class="hint" id="hint">drag to orbit · scroll to zoom</div>
+    </div>
+
+    <div class="legend" id="legend"></div>
+
+    <div class="readout">
+      <div class="cell">
+        <span class="flabel">Positions above cutoff</span>
+        <span class="big" id="mCount">—</span>
+        <span class="sub" id="mCountSub">of __N__</span>
+      </div>
+      <div class="cell">
+        <span class="flabel">Ground found, against measured</span>
+        <span class="big" id="mFound">—</span>
+        <span class="sub" id="mFoundSub">measured finds —</span>
+      </div>
+      <div class="cell">
+        <span class="flabel">Metal accounted for</span>
+        <span class="big" id="mMetal">—</span>
+        <span class="sub" id="mMetalSub">mean grade over the panel</span>
+      </div>
+      <div class="cell">
+        <span class="flabel">Highest value</span>
+        <span class="big" id="mMax">—</span>
+        <span class="sub" id="mMaxSub">measured peaks at —</span>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script type="application/json" id="payload">__PAYLOAD__</script>
+<script>__PLOTLYJS__</script>
+<script>
+(function () {
+  "use strict";
+  var RAW = JSON.parse(document.getElementById("payload").textContent);
+  var N = RAW.n, ELS = RAW.elements, VIEWS = RAW.views;
+  var EDGES = RAW.classes, RAMP = RAW.ramp, LOG_EPS = 1e-3, LO = -2;
+
+  function unb64(s) {
+    var bin = atob(s), u8 = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return new Float32Array(u8.buffer);
+  }
+  var XYZ = unb64(RAW.xyz);
+  // grade[element][view] -> Float32Array(N); simulated runs live in a list
+  var G = {}, RUNS = {};
+  ELS.forEach(function (e) {
+    // Decode whatever the payload carries rather than iterating view keys:
+    // the simulated view is keyed "sim" but reads from "etype" or a run, so
+    // keying off the views alone silently leaves the E-type undecoded.
+    G[e] = {};
+    Object.keys(RAW.grade[e]).forEach(function (k) { G[e][k] = unb64(RAW.grade[e][k]); });
+    RUNS[e] = (RAW.runs[e] || []).map(unb64);
+  });
+
+  // Run 1, not the E-type. The mean of the realisations is a smoother, and
+  // opening the simulated view on a smoothed thing argues against itself.
+  var state = { el: ELS.indexOf(RAW.defaultElement), view: 0, run: 1, cut: 0 };
+
+  // ---- summaries, computed once per array -------------------------------
+  var cache = {};
+  function summary(arr, key) {
+    if (cache[key]) return cache[key];
+    var mx = -Infinity, s = 0;
+    for (var i = 0; i < N; i++) { var v = arr[i]; if (v > mx) mx = v; s += v; }
+    return (cache[key] = { max: mx, mean: s / N });
+  }
+  function current() {
+    var e = ELS[state.el], v = VIEWS[state.view];
+    if (v.key === "sim") {
+      return state.run === 0
+        ? { arr: G[e].etype, key: e + ":etype" }
+        : { arr: RUNS[e][state.run - 1], key: e + ":run" + state.run };
+    }
+    return { arr: G[e][v.key], key: e + ":" + v.key };
+  }
+  function measured(e) { return { arr: G[e].actual, key: e + ":actual" }; }
+
+  // ---- colour -----------------------------------------------------------
+  function classOf(v, E) {
+    return v < E[0] ? 0 : v < E[1] ? 1 : v < E[2] ? 2 : v < E[3] ? 3 : v < E[4] ? 4 : 5;
+  }
+  function colours(arr, E, cut) {
+    var out = new Array(N);
+    for (var i = 0; i < N; i++) {
+      // Below the cutoff a position is not removed, it is dimmed to nothing:
+      // keeping the array length fixed means one restyle instead of rebuilding
+      // the trace on every slider step.
+      out[i] = arr[i] < cut ? "rgba(0,0,0,0)" : RAMP[classOf(arr[i], E)];
+    }
+    return out;
+  }
+
+  // ---- figure -----------------------------------------------------------
+  var gd = document.getElementById("plot");
+  function build() {
+    var x = [], y = [], z = [];
+    for (var i = 0; i < N; i++) { x.push(XYZ[i * 3]); y.push(XYZ[i * 3 + 1]); z.push(XYZ[i * 3 + 2]); }
+    // The payload fixes a height so the figure stands alone if it is ever
+    // opened on its own. Here the grid cell decides, and a fixed height would
+    // either overflow the viewport or leave a band of paper under the scene.
+    var layout = RAW.layout;
+    delete layout.height;
+    delete layout.width;
+    layout.autosize = true;
+    Plotly.newPlot(gd, [{
+      type: "scatter3d", mode: "markers", x: x, y: y, z: z,
+      marker: { size: RAW.markerSize, color: [], line: { width: 0 } },
+      hovertemplate: "%{customdata:.3f} %<br>%{x:.0f}E %{y:.0f}N %{z:.0f}mRL<extra></extra>",
+      customdata: [], name: ""
+    }], layout, { displayModeBar: false, responsive: true });
+    applyHash();
+    // responsive:true watches the window. The rail is a fixed width, so the
+    // window is the only thing that resizes the cell — except when the notes
+    // open on a narrow layout, which the observer catches.
+    if (window.ResizeObserver) {
+      new ResizeObserver(function () { Plotly.Plots.resize(gd); }).observe(gd.parentNode);
+    }
+  }
+
+  function refresh() {
+    var e = ELS[state.el], E = EDGES[e], cur = current(), meas = measured(e);
+    var arr = cur.arr;
+    Plotly.restyle(gd, { "marker.color": [colours(arr, E, state.cut)],
+                         customdata: [Array.prototype.slice.call(arr)] }, [0]);
+    document.getElementById("tag").textContent = VIEWS[state.view].tag +
+      (VIEWS[state.view].key === "sim" ? " · " + runLabel() : "");
+    legend(E, e);
+    metrics(arr, meas.arr, cur.key, e);
+  }
+
+  function runLabel() { return state.run === 0 ? "mean of all runs" : "run " + state.run; }
+
+  function legend(E, e) {
+    var labels = ["< " + E[0]];
+    for (var q = 0; q < 4; q++) labels.push(E[q] + " – " + E[q + 1]);
+    labels.push("≥ " + E[4]);
+    document.getElementById("legend").innerHTML = labels.map(function (lb, i) {
+      return '<span class="sw"><span class="chip" style="background:' + RAMP[i] +
+             '"></span>' + lb + "</span>";
+    }).join("") + '<span class="unit">% ' + e + "</span>";
+  }
+
+  // ---- metrics ----------------------------------------------------------
+  function fmtInt(n) { return n.toLocaleString("en-US"); }
+  function fmtG(v) { return v >= 10 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v.toFixed(3); }
+  function countAbove(a, c) { var n = 0; for (var i = 0; i < N; i++) if (a[i] >= c) n++; return n; }
+  function set(id, text, na) {
+    var el = document.getElementById(id);
+    el.textContent = text;
+    el.classList.toggle("na", !!na);
+  }
+
+  function metrics(arr, meas, key, e) {
+    var c = state.cut, isMeasured = VIEWS[state.view].key === "actual";
+    var nCur = c > 0 ? countAbove(arr, c) : N;
+    var nMeas = c > 0 ? countAbove(meas, c) : N;
+    var sCur = summary(arr, key), sMeas = summary(meas, e + ":actual");
+
+    set("mCount", fmtInt(nCur));
+    document.getElementById("mCountSub").textContent = "of " + fmtInt(N);
+
+    // Performance is a comparison, so it is undefined for the answer sheet.
+    if (isMeasured) {
+      set("mFound", "—", true);
+      document.getElementById("mFoundSub").textContent = "this is the measured ground";
+      set("mMetal", "—", true);
+      document.getElementById("mMetalSub").textContent = "mean " + fmtG(sMeas.mean) + " % " + e;
+      set("mMax", fmtG(sMeas.max) + " %");
+      document.getElementById("mMaxSub").textContent = "highest assay in the panel";
+    } else {
+      var found = nMeas > 0 ? (nCur / nMeas) * 100 : NaN;
+      set("mFound", isFinite(found) ? found.toFixed(0) + " %" : "—", !isFinite(found));
+      document.getElementById("mFoundSub").textContent =
+        "measured finds " + fmtInt(nMeas);
+      set("mMetal", (sCur.mean / sMeas.mean * 100).toFixed(0) + " %");
+      document.getElementById("mMetalSub").textContent =
+        fmtG(sCur.mean) + " % against a measured " + fmtG(sMeas.mean) + " %";
+      set("mMax", fmtG(sCur.max) + " %");
+      document.getElementById("mMaxSub").textContent =
+        "measured peaks at " + fmtG(sMeas.max) + " %";
+    }
+  }
+
+  // ---- controls ---------------------------------------------------------
+  function seg(host, items, onPick, pressed) {
+    host.innerHTML = "";
+    items.forEach(function (label, i) {
+      var b = document.createElement("button");
+      b.type = "button"; b.textContent = label;
+      b.setAttribute("aria-pressed", String(i === pressed()));
+      b.addEventListener("click", function () {
+        onPick(i);
+        Array.prototype.forEach.call(host.children, function (c, j) {
+          c.setAttribute("aria-pressed", String(j === pressed()));
+        });
+      });
+      host.appendChild(b);
+    });
+  }
+
+  var cut = document.getElementById("cut"), run = document.getElementById("run");
+  var runField = document.getElementById("runField");
+
+  function syncRunField() {
+    runField.classList.toggle("muted", VIEWS[state.view].key !== "sim");
+  }
+  function applyCut() {
+    var s = Number(cut.value) / 1000;
+    var hi = Math.log(summary(G[ELS[state.el]].actual, ELS[state.el] + ":actual").max
+                      + LOG_EPS) / Math.LN10;
+    state.cut = s === 0 ? 0 : Math.pow(10, LO + (hi - LO) * s) - LOG_EPS;
+    document.getElementById("cutval").textContent =
+      state.cut > 0 ? fmtG(state.cut) + " % " + ELS[state.el] : "no cutoff";
+    refresh();
+    document.getElementById("cuthint").textContent = state.cut > 0
+      ? "dimmed below the cutoff" : "showing every position";
+  }
+
+  seg(document.getElementById("segEl"), ELS, function (i) { state.el = i; applyCut(); },
+      function () { return state.el; });
+  seg(document.getElementById("segView"), VIEWS.map(function (v) { return v.label; }),
+      function (i) { state.view = i; syncRunField(); refresh(); },
+      function () { return state.view; });
+
+  cut.addEventListener("input", applyCut);
+  run.max = String(RAW.nreal);
+  run.value = String(state.run);
+  document.getElementById("runlab").textContent =
+    state.run === 0 ? "mean of all runs" : "run " + state.run;
+  run.addEventListener("input", function () {
+    state.run = Number(run.value);
+    document.getElementById("runlab").textContent = runLabel();
+    refresh();
+  });
+
+  // ---- camera handed over from the deposit page -------------------------
+  function applyHash() {
+    var m = /eye=(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)/.exec(location.hash || "");
+    if (!m) return;
+    Plotly.relayout(gd, { "scene.camera.eye": { x: +m[1], y: +m[2], z: +m[3] } });
+  }
+  window.addEventListener("hashchange", applyHash);
+  document.getElementById("back").addEventListener("click", function (ev) {
+    var cam = (gd._fullLayout && gd._fullLayout.scene) ? gd._fullLayout.scene.camera : null;
+    if (cam) {
+      ev.preventDefault();
+      location.href = "index.html#eye=" + [cam.eye.x, cam.eye.y, cam.eye.z]
+        .map(function (v) { return v.toFixed(4); }).join(",");
+    }
+  });
+
+  if (RAW.offFrame) {
+    // The frame is trimmed to the bulk of the drilling. Saying how many
+    // positions fall outside it keeps the view honest: they are off-screen,
+    // not excluded, and every number in the readout still counts them.
+    document.getElementById("hint").textContent =
+      "drag to orbit · scroll to zoom · " + RAW.offFrame.toLocaleString("en-US") +
+      " positions outside the frame, still counted";
+  }
+  build();
+  syncRunField();
+  applyCut();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+{
+  "artifact": "data\\processed\\thalanga_modelling.parquet",
+  "box": {
+    "x_max": 372597.87,
+    "x_min": 372049.79,
+    "y_max": 7750443.92,
+    "y_min": 7750115.94
+  },
+  "buffer_m": 0.0,
+  "counts": {
+    "holdout": 12985,
+    "train": 64235,
+    "unpositioned": 2
+  },
+  "explained_variance_ratio": [
+    0.6479171204314232,
+    0.25588777263518275,
+    0.09619510693339407
+  ],
+  "n_dropped_impossible": 0,
+  "n_dropped_missing_grade": 4434,
+  "n_eval_eligible": 12973,
+  "n_fit_eligible": 63690,
+  "n_qc_excluded": 557,
+  "n_rows": 77222,
+  "pca_components": 3,
+  "source": "data\\interim\\thalangaML_desurveyed_qc.parquet",
+  "split_hash": "cc34d35255988675"
+}

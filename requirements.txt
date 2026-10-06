@@ -1,0 +1,10 @@
+# Build-time only. The generated pages have no runtime dependencies:
+# data, plotly.js and the IBM Plex faces are all inlined into the HTML.
+numpy>=1.26
+pandas>=2.0
+pyarrow>=14.0
+plotly>=6.0
+matplotlib>=3.8
+
+# Verification only; not needed to build or view.
+# playwright>=1.40
