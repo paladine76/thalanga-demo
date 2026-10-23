@@ -4,22 +4,33 @@ Build the whole demo into dist/.
 
     python build.py
 
-Put the five files the pipeline produces into data/ and that is the whole
-command. Each one is found by shape, so names do not have to match:
+Put the files the pipeline produces into data/ and that is the whole command.
+Each one is found by shape, so names do not have to match:
 
     data/thalanga_modelling.parquet            *modelling*.parquet
     data/baseline_predictions.parquet          *baseline*.parquet
-    data/sgs_realizations.npz                  *.npz
+    data/sgs_realizations.npz                  *sgs*.npz
+    data/ndp_realizations.npz                  *ndp*.npz        (optional)
     data/thalanga_modelling_manifest.json      *manifest*.json
     data/thalanga_3d.html                      *.html
+    data/Dipole-Dipole_IP-Res_..._data.csv     *IP*.csv         (optional)
 
-Any of them can still be pointed at directly with --assays, --dem and so on,
+The two cubes are the one case where the name matters, because both are .npz
+and the build has to tell them apart. A cube named something else is pointed
+at with --sims or --ndp.
+
+Leaving the diffusion cube out is supported: the panel page then builds the
+three views it had before diffusion existed, and says so as it goes. Leaving
+the IP survey out is supported too: the regional page then has no Resistivity
+layer.
+
+Any input can still be pointed at directly with --assays, --dem and so on,
 and --data moves the whole folder.
 
 Two pages come out, and nothing else is needed to view them:
 
     dist/index.html   the deposit and the blind panel, one scene, two acts
-    dist/panel.html   inside the panel: measured, kriged, simulated
+    dist/panel.html   inside the panel: measured, kriged, simulated, diffusion
 
 They link to each other by relative path and carry their own data and
 plotly.js, so the pair works from a filesystem, from a shared drive, or from
@@ -30,7 +41,9 @@ WHAT THE SHELL IS GIVEN
 ------------------------------------------------------------------------------
 `regional.py` produces the figure; the shell drives it. The payload carries the
 figure itself, the trace map so the page never counts indices by hand, both
-surface states already flattened into restyle paths, and the flight plan.
+surface states already flattened into restyle paths, the flight plan, and
+under `layers` the colouring of each drilling view (Targets, Zone, Associated)
+and the IP survey's two properties.
 
 The flight's destination is fixed at build time and its origin is not: the
 camera starts wherever the viewer has rotated to, so only the target can be
@@ -46,6 +59,7 @@ from pathlib import Path
 
 import dataio
 import fonts
+import geophys
 import palette
 import panel_page
 import regional
@@ -66,24 +80,39 @@ SCALE = ("{n:,} assay positions over {extent} · vertical exaggeration "
 
 # Found by shape rather than by exact name, so a file keeps whatever the
 # pipeline called it. Each pattern has to be unambiguous inside data/.
+#
+# The two simulation cubes are both .npz and are told apart by name, which is
+# the one place a file cannot be called anything at all. A cube that does not
+# say which method produced it has to be pointed at with --sims or --ndp.
+#
+# The third field is whether the build needs it. The diffusion cube and the
+# IP survey are optional: without the cube the panel page builds its three
+# original views, and without the survey the regional page has no Resistivity
+# layer. The build says which, rather than failing.
 INPUTS = {
-    "assays": ("*modelling*.parquet", "the assay table with X, Y, Z and grades"),
-    "baseline": ("*baseline*.parquet", "ordinary kriging and the simpler estimates"),
-    "sims": ("*.npz", "the conditional simulations"),
-    "manifest": ("*manifest*.json", "the blind-panel extent"),
-    "dem": ("*.html", "the ground surface, from dxf_surface_3d.py"),
+    "assays": ("*modelling*.parquet", "the assay table with X, Y, Z and grades", True),
+    "baseline": ("*baseline*.parquet", "ordinary kriging and the simpler estimates", True),
+    "sims": ("*sgs*.npz", "the sequential Gaussian simulations", True),
+    "ndp": ("*ndp*.npz", "the diffusion realisations", False),
+    "manifest": ("*manifest*.json", "the blind-panel extent", True),
+    "dem": ("*.html", "the ground surface, from dxf_surface_3d.py", True),
+    "ip": ("*IP*.csv", "the dipole-dipole IP and resistivity inversion", False),
 }
 
 
 def find_inputs(folder: Path, override: dict) -> dict:
-    """Locate the five pipeline files, or say precisely what is missing.
+    """Locate the pipeline files, or say precisely what is missing.
 
-    Passing five paths on the command line is error-prone and, with line
+    Passing six paths on the command line is error-prone and, with line
     continuations, does not survive being pasted into a Windows prompt. A
     folder with the files in it is the thing a person can actually check.
+
+    A missing optional input is absent from the returned mapping rather than
+    present and None, so a caller that forgets to check gets a KeyError here
+    instead of a confusing failure several steps later.
     """
     found, problems = {}, []
-    for key, (pattern, what) in INPUTS.items():
+    for key, (pattern, what, required) in INPUTS.items():
         if override.get(key):
             found[key] = Path(override[key])
             if not found[key].exists():
@@ -91,7 +120,8 @@ def find_inputs(folder: Path, override: dict) -> dict:
             continue
         hits = sorted(p for p in folder.glob(pattern) if p.is_file())
         if not hits:
-            problems.append(f"  missing {pattern:<24} {what}")
+            if required:
+                problems.append(f"  missing {pattern:<24} {what}")
         elif len(hits) > 1:
             names = ", ".join(h.name for h in hits)
             problems.append(f"  {pattern} matches {len(hits)} files ({names});"
@@ -103,7 +133,7 @@ def find_inputs(folder: Path, override: dict) -> dict:
         raise SystemExit(
             f"\ncannot build from {folder.resolve()}\n"
             + "\n".join(problems)
-            + "\n\nPut the five pipeline files in that folder, or pass each "
+            + "\n\nPut the pipeline files in that folder, or pass each "
               "path with its own flag.\n")
     return found
 
@@ -131,6 +161,7 @@ def build_shell(result: dict, data, template: Path, embed_plotly: bool) -> str:
         "filled": result["filled"],
         "wire": result["wire"],
         "flight": flight.as_dict(),
+        "layers": result["layers"],
     }
 
     html = template.read_text(encoding="utf-8")
@@ -164,8 +195,12 @@ def parse_args(argv=None):
     p.add_argument("--assays", default=None, help="override discovery")
     p.add_argument("--baseline", default=None, help="override discovery")
     p.add_argument("--sims", default=None, help="override discovery")
+    p.add_argument("--ndp", default=None,
+                   help="override discovery; optional, the diffusion cube")
     p.add_argument("--manifest", default=None, help="override discovery")
     p.add_argument("--dem", default=None, help="override discovery")
+    p.add_argument("--ip", default=None,
+                   help="override discovery; optional, the IP-resistivity csv")
     p.add_argument("--dem-cache", default="dist/.terrain.npz",
                    help="npz cache so later builds skip re-reading the DEM")
     p.add_argument("--out", default="dist")
@@ -194,20 +229,30 @@ def main(argv=None) -> int:
                         {k: getattr(args, k) for k in INPUTS})
     print(f"inputs from {Path(args.data).resolve()}")
     for key in INPUTS:
-        print(f"  {key:<9} {paths[key].name}")
+        print(f"  {key:<9} {paths[key].name if key in paths else '-- not supplied'}")
     print()
 
     data = dataio.load(paths["assays"], paths["baseline"], paths["sims"],
-                       paths["manifest"])
+                       paths["manifest"], paths.get("ndp"))
     Path(args.dem_cache).parent.mkdir(parents=True, exist_ok=True)
     ground = terrain_mod.load(paths["dem"], args.dem_cache)
+
+    ip = geophys.load(paths["ip"]) if "ip" in paths else None
 
     print("\nregional page")
     result = regional.build(data, ground, args.margin,
                             max_informing=args.max_informing,
-                            with_controls=False)
+                            with_controls=False, ip=ip)
     print(f"  scene        {result['extent'].describe()}")
     print(f"  exaggeration x{result['exaggeration']:.2f} (verified)")
+    print(f"  drilling     {', '.join(result['metals'])}"
+          + (", zone" if "zones" in result["layers"] else "")
+          + (f", {len(result['layers']['associated']['elements'])} associated"
+             if "associated" in result["layers"] else ""))
+    if result["survey"] is not None:
+        print(f"  ip           {result['survey'].note()}")
+    else:
+        print("  ip           -- not supplied, no Resistivity layer")
     index = out / "index.html"
     index.write_text(
         build_shell(result, data, templates / "shell.html", not args.cdn),
@@ -217,8 +262,10 @@ def main(argv=None) -> int:
     print("\npanel page")
     payload = panel_page.build_payload(data, runs=args.runs,
                                        default_element=args.element)
-    print(f"  positions    {payload['n']:,}, {payload['nreal']} of "
-          f"{data.n_realisations} realisations")
+    print(f"  positions    {payload['n']:,}")
+    print(f"  views        {', '.join(v['label'] for v in payload['views'])}")
+    for m, k in payload["nreal"].items():
+        print(f"  {m + ' draws':<13}{k} of {payload['ofDraws'][m]} shipped")
     print(f"  off-frame    {payload['offFrame']:,} (drawn off-screen, still counted)")
     panel = out / "panel.html"
     panel.write_text(

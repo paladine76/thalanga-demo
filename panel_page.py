@@ -1,21 +1,52 @@
 #!/usr/bin/env python3
 """
-The blind panel page: one view, switched between measured, kriged and simulated.
+The blind panel page: one view, switched between measured, kriged, simulated
+and diffusion.
 
-A single 3D scene with three buttons, rather than three scenes side by side.
+A single 3D scene with four buttons, rather than four scenes side by side.
 Comparing panels means moving your eye between them and holding a picture in
 memory; switching one panel means the points stay where they are and only the
 colour changes, which is the comparison a geologist is actually making.
 
     Metal       Cu · Pb · Zn
-    Showing     Measured · Kriged · Simulated
-    Realisation mean of all runs, or a single one (simulated only)
+    Showing     Measured · Kriged · Simulated · Diffusion
+    Realisation the median of all runs, or a single one (the two ensembles)
     Cutoff      dims everything below it
 
 The readout follows the selection. Against the measured view the performance
 cells read em-dash: the answer sheet has no error to report, and showing it a
-score of 100 % would invite the reader to compare three numbers of which one is
+score of 100 % would invite the reader to compare four numbers of which one is
 meaningless.
+
+------------------------------------------------------------------------------
+WHY EACH ENSEMBLE OPENS ON A SINGLE REALISATION
+------------------------------------------------------------------------------
+Both ensembles land on run 1 and keep their median one slider step away.
+
+No pointwise summary answers the question this page asks. Proportion above a
+cutoff is a question about a distribution, and collapsing a hundred fields to
+one number per position throws the distribution away before the question is
+put. At a 4 % Zn cutoff, against 2,462 measured positions:
+
+    kriged                      149    6 %
+    SGS  pointwise median       160    6 %
+    SGS  pointwise mean       1,641   67 %
+    SGS  single draw, typical 2,197   89 %
+    NDP  pointwise median     1,000   41 %
+    NDP  pointwise mean       3,104  126 %
+    NDP  single draw, typical 2,286   93 %
+
+The mean fills in every low that any realisation had and over-reports; the
+median is dragged down wherever the realisations disagree and under-reports.
+A realisation is the one object built to reproduce the histogram, so it is
+what the page opens on.
+
+The gap between the two medians, 160 against 1,000, is mostly a measure of how
+much each method's draws disagree with one another rather than of accuracy.
+SGS draws range from 889 to 6,508 positions above the cutoff and NDP draws
+from 2,123 to 2,485, so the SGS median collapses and the NDP median survives.
+That same tight agreement is why the NDP P10-P90 band misses the measured
+proportion at every cutoff while the wider SGS band contains it.
 
 ------------------------------------------------------------------------------
 BUILT ON PLOTLY, NOT THE TRIPTYCH RENDERER
@@ -54,20 +85,33 @@ DEFAULT_CLASSES = {
     "Zn": [0.5, 1.0, 2.0, 4.0, 8.0],
 }
 
+# `kind` tells the page whether the realisation slider applies. `key` for an
+# ensemble is the method name in `Thalanga.ensembles`, so adding a third
+# estimator here needs no other change in this module.
 VIEWS = [
-    {"key": "actual", "label": "Measured", "tag": "Measured assays"},
-    {"key": "ok", "label": "Kriged", "tag": "Ordinary kriging"},
-    {"key": "sim", "label": "Simulated", "tag": "Sequential Gaussian simulation"},
+    {"key": "actual", "kind": "static", "label": "Measured",
+     "tag": "Measured assays"},
+    {"key": "ok", "kind": "static", "label": "Kriged",
+     "tag": "Ordinary kriging"},
+    {"key": "sgs", "kind": "sim", "label": "Simulated",
+     "tag": "Sequential Gaussian simulation"},
+    {"key": "ndp", "kind": "sim", "label": "Diffusion",
+     "tag": "Neural Diffusion Process"},
 ]
 
 DEFAULT_RUNS = 6
 MARKER_SIZE = 2.6
 
+# The lede counts the views in words, because "3 ways" in running prose reads
+# as a typo on a page whose every other small number is spelled out.
+COUNT_WORDS = {2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
+
 TITLE = "The Estimate Against the Ground"
-LEDE = ("The same {n:,} held-out positions, three ways. Measured is what the "
-        "core assayed. Kriged and simulated were built from the drilling "
-        "outside this block and never saw an assay inside it. Switch between "
-        "them and raise the cutoff; the kriged view empties first.")
+LEDE = ("The same {n:,} held-out positions, {k} ways. Measured is what the core "
+        "assayed. The others were built from the drilling outside this block "
+        "and never saw an assay inside it. The simulated views open on one "
+        "realisation of a hundred; raise the cutoff and watch the kriged view "
+        "empty first.")
 
 
 # --------------------------------------------------------------------------- #
@@ -129,39 +173,63 @@ def panel_layout(data, elements) -> tuple[dict, int]:
     return layout, outside
 
 
+def views_for(data) -> list[dict]:
+    """The views this dataset can actually draw.
+
+    An ensemble that was not loaded is dropped rather than shipped as a dead
+    button, so building without the diffusion cube gives the three-view page
+    back unchanged.
+    """
+    return [v for v in VIEWS
+            if v["kind"] != "sim" or v["key"] in data.ensembles]
+
+
 def build_payload(data, elements=("Cu", "Pb", "Zn"), runs: int = DEFAULT_RUNS,
                   classes=None, default_element: str = "Zn") -> dict:
     classes = classes or DEFAULT_CLASSES
     xyz = data.panel[["X", "Y", "Z"]].to_numpy(dtype=float)
-    chosen = pick_runs(data.n_realisations, runs)
-
+    views = views_for(data)
     layout, outside = panel_layout(data, elements)
-    grade, run_blobs = {}, {}
-    for e in elements:
-        grade[e] = {
-            "actual": _b64(data.measured(e)),
-            "ok": _b64(data.estimate(e, "ok")),
-            # The E-type uses all 100 realisations even though only a few
-            # ship: a mean of a hundred is the smoother, and smoothing is
-            # what this view is about.
-            "etype": _b64(data.sims[e].mean(axis=1)),
+
+    # The two static views are columns of the panel frame; the ensembles are
+    # cubes. Keeping them apart in the payload means the page never has to ask
+    # which kind of thing a key refers to -- the view says so.
+    static = {
+        "actual": {e: _b64(data.measured(e)) for e in elements},
+        "ok": {e: _b64(data.estimate(e, "ok")) for e in elements},
+    }
+
+    ensembles, chosen = {}, {}
+    for v in views:
+        if v["kind"] != "sim":
+            continue
+        m = v["key"]
+        picks = pick_runs(data.n_draws(m), runs)
+        chosen[m] = picks
+        ensembles[m] = {
+            # The median over every draw the pipeline produced, not over the
+            # handful shipped: the central estimate should not move because
+            # the page carries six realisations instead of a hundred.
+            "centre": {e: _b64(data.centre(m, e)) for e in elements},
+            "runs": {e: [_b64(data.realisations(m, e)[:, r]) for r in picks]
+                     for e in elements},
         }
-        run_blobs[e] = [_b64(data.sims[e][:, r]) for r in chosen]
 
     return {
         "n": int(len(xyz)),
         "elements": list(elements),
         "defaultElement": default_element,
-        "views": VIEWS,
+        "views": views,
         "classes": {e: list(classes[e]) for e in elements},
         "ramp": RAMP,
-        "nreal": len(chosen),
+        "nreal": {m: len(p) for m, p in chosen.items()},
+        "ofDraws": {m: int(data.n_draws(m)) for m in chosen},
         "markerSize": MARKER_SIZE,
         # Full coordinates, not origin-relative: plotly labels its own axes and
         # the regional page uses the same numbers, so the two agree on sight.
         "xyz": _b64(xyz.ravel()),
-        "grade": grade,
-        "runs": run_blobs,
+        "static": static,
+        "ensembles": ensembles,
         "layout": json.loads(_to_json(layout)),
         "offFrame": outside,
     }
@@ -188,7 +256,9 @@ def render(template: str | Path, payload: dict, embed_plotly: bool = True) -> st
 
     for token, value in (
         ("__TITLE__", TITLE),
-        ("__LEDE__", LEDE.format(n=payload["n"])),
+        ("__LEDE__", LEDE.format(
+            n=payload["n"],
+            k=COUNT_WORDS.get(len(payload["views"]), len(payload["views"])))),
         ("__N__", f"{payload['n']:,}"),
         ("__CSS_VARS__", palette.css_variables()),
         ("__FONTS__", fonts.css()),
@@ -211,6 +281,7 @@ def main(argv=None) -> int:
     p.add_argument("--baseline", required=True)
     p.add_argument("--sims", required=True)
     p.add_argument("--manifest", required=True)
+    p.add_argument("--ndp", default=None, help="diffusion realisations npz")
     p.add_argument("--template", default="templates/panel.html")
     p.add_argument("--runs", type=int, default=DEFAULT_RUNS)
     p.add_argument("--element", default="Zn", help="metal selected on load")
@@ -219,11 +290,13 @@ def main(argv=None) -> int:
     p.add_argument("-o", "--out", default="dist/panel.html")
     a = p.parse_args(argv)
 
-    data = dataio.load(a.assays, a.baseline, a.sims, a.manifest)
+    data = dataio.load(a.assays, a.baseline, a.sims, a.manifest, a.ndp)
     payload = build_payload(data, runs=a.runs, default_element=a.element)
-    print(f"payload      {payload['n']:,} positions, "
-          f"{payload['nreal']} of {data.n_realisations} realisations "
-          f"({pick_runs(data.n_realisations, a.runs)})")
+    for m, k in payload["nreal"].items():
+        print(f"payload      {m}: {k} of {payload['ofDraws'][m]} draws "
+              f"({pick_runs(payload['ofDraws'][m], a.runs)})")
+    print(f"             {payload['n']:,} positions, "
+          f"{len(payload['views'])} views")
 
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)

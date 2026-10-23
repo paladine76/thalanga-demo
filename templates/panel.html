@@ -230,20 +230,37 @@ input[type=range] { width: 100%; margin: 0; accent-color: var(--ink); }
     return new Float32Array(u8.buffer);
   }
   var XYZ = unb64(RAW.xyz);
-  // grade[element][view] -> Float32Array(N); simulated runs live in a list
-  var G = {}, RUNS = {};
-  ELS.forEach(function (e) {
-    // Decode whatever the payload carries rather than iterating view keys:
-    // the simulated view is keyed "sim" but reads from "etype" or a run, so
-    // keying off the views alone silently leaves the E-type undecoded.
-    G[e] = {};
-    Object.keys(RAW.grade[e]).forEach(function (k) { G[e][k] = unb64(RAW.grade[e][k]); });
-    RUNS[e] = (RAW.runs[e] || []).map(unb64);
+
+  // Two shapes, kept apart. STATIC[viewKey][element] is one array; an
+  // ensemble carries a centre and the shipped draws. A view's `kind` says
+  // which it is, so nothing here infers a shape from a key name.
+  var STATIC = {}, ENS = {};
+  Object.keys(RAW.static).forEach(function (k) {
+    STATIC[k] = {};
+    ELS.forEach(function (e) { STATIC[k][e] = unb64(RAW.static[k][e]); });
+  });
+  Object.keys(RAW.ensembles).forEach(function (m) {
+    var src = RAW.ensembles[m];
+    ENS[m] = { centre: {}, runs: {} };
+    ELS.forEach(function (e) {
+      ENS[m].centre[e] = unb64(src.centre[e]);
+      ENS[m].runs[e] = src.runs[e].map(unb64);
+    });
   });
 
-  // Run 1, not the E-type. The mean of the realisations is a smoother, and
-  // opening the simulated view on a smoothed thing argues against itself.
+  // run 1, a single realisation, is where each ensemble opens. run 0 is the
+  // median over every draw and sits one step away.
+  //
+  // Both pointwise summaries answer a grade-tonnage question wrongly, because
+  // the question is about a distribution and a pointwise summary has discarded
+  // it. At a 4 % Zn cutoff, against 2,462 measured positions, the SGS mean
+  // reports 1,641 and its median 160; the NDP mean reports 3,104 and its
+  // median 1,000. A typical single draw reports 2,197 and 2,286. The thing a
+  // realisation is built to reproduce is the histogram, so that is what the
+  // page opens on.
   var state = { el: ELS.indexOf(RAW.defaultElement), view: 0, run: 1, cut: 0 };
+  function view() { return VIEWS[state.view]; }
+  function isSim() { return view().kind === "sim"; }
 
   // ---- summaries, computed once per array -------------------------------
   var cache = {};
@@ -254,15 +271,16 @@ input[type=range] { width: 100%; margin: 0; accent-color: var(--ink); }
     return (cache[key] = { max: mx, mean: s / N });
   }
   function current() {
-    var e = ELS[state.el], v = VIEWS[state.view];
-    if (v.key === "sim") {
+    var e = ELS[state.el], v = view();
+    if (v.kind === "sim") {
+      var E = ENS[v.key];
       return state.run === 0
-        ? { arr: G[e].etype, key: e + ":etype" }
-        : { arr: RUNS[e][state.run - 1], key: e + ":run" + state.run };
+        ? { arr: E.centre[e], key: v.key + ":" + e + ":centre" }
+        : { arr: E.runs[e][state.run - 1], key: v.key + ":" + e + ":r" + state.run };
     }
-    return { arr: G[e][v.key], key: e + ":" + v.key };
+    return { arr: STATIC[v.key][e], key: v.key + ":" + e };
   }
-  function measured(e) { return { arr: G[e].actual, key: e + ":actual" }; }
+  function measured(e) { return { arr: STATIC.actual[e], key: "actual:" + e }; }
 
   // ---- colour -----------------------------------------------------------
   function classOf(v, E) {
@@ -311,13 +329,20 @@ input[type=range] { width: 100%; margin: 0; accent-color: var(--ink); }
     var arr = cur.arr;
     Plotly.restyle(gd, { "marker.color": [colours(arr, E, state.cut)],
                          customdata: [Array.prototype.slice.call(arr)] }, [0]);
-    document.getElementById("tag").textContent = VIEWS[state.view].tag +
-      (VIEWS[state.view].key === "sim" ? " · " + runLabel() : "");
+    document.getElementById("tag").textContent = view().tag +
+      (isSim() ? " · " + runLabel() : "");
     legend(E, e);
     metrics(arr, meas.arr, cur.key, e);
   }
 
-  function runLabel() { return state.run === 0 ? "mean of all runs" : "run " + state.run; }
+  // The median is over every draw the pipeline produced, not over the handful
+  // the page carries, so the label says how many it really used.
+  function runLabel() {
+    if (!isSim()) return "median of all runs";
+    return state.run === 0
+      ? "median of all " + RAW.ofDraws[view().key] + " runs"
+      : "run " + state.run;
+  }
 
   function legend(E, e) {
     var labels = ["< " + E[0]];
@@ -391,11 +416,23 @@ input[type=range] { width: 100%; margin: 0; accent-color: var(--ink); }
   var runField = document.getElementById("runField");
 
   function syncRunField() {
-    runField.classList.toggle("muted", VIEWS[state.view].key !== "sim");
+    var sim = isSim();
+    runField.classList.toggle("muted", !sim);
+    if (sim) {
+      // Methods need not ship the same number of draws, so the slider is
+      // rebuilt against whichever ensemble is selected and a position past
+      // the end of a shorter one is pulled back rather than left dangling.
+      var mx = RAW.nreal[view().key];
+      run.max = String(mx);
+      if (state.run > mx) state.run = mx;
+      run.value = String(state.run);
+    }
+    document.getElementById("runlab").textContent = runLabel();
   }
   function applyCut() {
     var s = Number(cut.value) / 1000;
-    var hi = Math.log(summary(G[ELS[state.el]].actual, ELS[state.el] + ":actual").max
+    var hi = Math.log(summary(STATIC.actual[ELS[state.el]],
+                              "actual:" + ELS[state.el]).max
                       + LOG_EPS) / Math.LN10;
     state.cut = s === 0 ? 0 : Math.pow(10, LO + (hi - LO) * s) - LOG_EPS;
     document.getElementById("cutval").textContent =
@@ -412,10 +449,6 @@ input[type=range] { width: 100%; margin: 0; accent-color: var(--ink); }
       function () { return state.view; });
 
   cut.addEventListener("input", applyCut);
-  run.max = String(RAW.nreal);
-  run.value = String(state.run);
-  document.getElementById("runlab").textContent =
-    state.run === 0 ? "mean of all runs" : "run " + state.run;
   run.addEventListener("input", function () {
     state.run = Number(run.value);
     document.getElementById("runlab").textContent = runLabel();
