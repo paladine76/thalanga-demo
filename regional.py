@@ -9,7 +9,7 @@ into the panel starts from wherever they have rotated to.
 
     act 1   topography over 77,220 assay positions, coloured by one target
             metal's grade, by logged zone, or by one associated element;
-            the IP survey can be drawn over any of them
+            the IP survey or the gravity survey can be drawn over any of them
     act 2   the same positions recoloured: informing data in grey, the blind
             panel in pink, and the panel drawn as a volume you can click
 
@@ -57,6 +57,7 @@ import numpy as np
 import plotly.graph_objects as go
 
 import geophys
+import gravity as grav_mod
 import palette
 import scene as scn
 import terrain as terrain_mod
@@ -84,7 +85,7 @@ MAX_INFORMING = 40_000
 class Traces:
     """Which trace index holds what, so nothing downstream counts by hand.
 
-    `ip` is -1 when no survey was supplied.
+    `ip` and `gravity` are -1 when that survey was not supplied.
     """
 
     dem: int = 0
@@ -95,6 +96,7 @@ class Traces:
     box_lines: int = -1
     assoc_bar: int = -1
     ip: int = -1
+    gravity: int = -1
 
     @property
     def act2_indices(self) -> list[int]:
@@ -104,7 +106,8 @@ class Traces:
         return dict(dem=self.dem, drill=self.drill,
                     informing=self.informing, panel=self.panel,
                     boxMesh=self.box_mesh, boxLines=self.box_lines,
-                    assocBar=self.assoc_bar, ip=self.ip)
+                    assocBar=self.assoc_bar, ip=self.ip,
+                    gravity=self.gravity)
 
 
 def _b64(a: np.ndarray, dtype: str) -> str:
@@ -458,6 +461,54 @@ def box_traces(box: dict, zmin: float, zmax: float) -> list:
 
 
 # --------------------------------------------------------------------------- #
+# The gravity survey
+# --------------------------------------------------------------------------- #
+
+def _grid(a: np.ndarray, d: int) -> list:
+    """A 2D array as nested lists, rounded, with None for no data."""
+    return [[None if not np.isfinite(v) else round(float(v), d) for v in row]
+            for row in a]
+
+
+def gravity_layer(drp: grav_mod.Drape) -> tuple[go.Surface, dict]:
+    """The survey as one draped surface, and the products the shell switches.
+
+    The surface is lit flat so its colours read as the colour bar says;
+    shading would darken slopes and make a hillside look like a low. It opens
+    on the first product. Its colour bar takes the upper slot, which the
+    elevation bar and the IP bar also use, and the shell shows one at a time.
+    """
+    props = []
+    for p in drp.products:
+        mgal = p.unit == "mGal"
+        props.append({
+            "label": p.label, "color": _grid(p.values, 4 if mgal else 1),
+            "cmin": -p.limit, "cmax": p.limit,
+            "title": (f"Gravity, {p.label.lower()}<br>({p.unit}, violet = low)"
+                      if mgal else "Gravity tilt<br>(degrees)"),
+            # Plotly's surface hover exposes x, y, z and per-point arrays
+            # such as customdata, but not surfacecolor, so the shell points
+            # customdata at the same array as the colours.
+            "hover": (f"{p.label.lower()} %{{customdata:.3f}} {p.unit}" if mgal
+                      else "tilt %{customdata:.0f}°"),
+            "note": p.note(),
+        })
+    first = props[0]
+    trace = go.Surface(
+        x=_r(drp.x, 1), y=_r(drp.y, 1), z=_grid(drp.z, 1),
+        surfacecolor=first["color"], colorscale=palette.GRAVITY_RAMP,
+        cmin=first["cmin"], cmax=first["cmax"], showscale=True,
+        colorbar=dict(title=dict(text=first["title"]), thickness=13, len=0.42,
+                      x=1.01, y=0.95, yanchor="top", tickfont=dict(size=10)),
+        lighting=dict(ambient=1.0, diffuse=0.0, specular=0.0, fresnel=0.0),
+        hovertemplate=("%{x:.0f}E %{y:.0f}N<br>" + first["hover"]
+                       + "<extra>gravity 1982</extra>"),
+        name="gravity 1982", showlegend=False, visible=False,
+    )
+    return trace, {"props": props}
+
+
+# --------------------------------------------------------------------------- #
 # Controls
 # --------------------------------------------------------------------------- #
 
@@ -514,7 +565,7 @@ def controls(idx: Traces, filled: dict, wire: dict, df,
 
 def build(data, ground: terrain_mod.Terrain, margin: float = 500.0,
           metals=None, max_informing: int = MAX_INFORMING,
-          with_controls: bool = True, ip=None) -> dict:
+          with_controls: bool = True, ip=None, gravity=None) -> dict:
     """Both acts in one figure.
 
     Returns everything a page needs to drive it: the figure, which trace index
@@ -524,6 +575,8 @@ def build(data, ground: terrain_mod.Terrain, margin: float = 500.0,
 
     `ip` is the survey as `geophys.load` returns it, or None. It is clipped to
     the scene here, after the scene is fixed, so it can never change it.
+    `gravity` is the grid table as `gravity.load` returns it, or None; it is
+    draped over the same cropped ground, inside the same scene.
     """
     metals = metals or list(data.sims) or ["Zn", "Pb", "Cu"]
     df = data.assays
@@ -553,6 +606,12 @@ def build(data, ground: terrain_mod.Terrain, margin: float = 500.0,
         layers["associated"] = associated_state(data)
         idx.assoc_bar = len(traces)
         traces.append(associated_bar(extent))
+    if gravity is not None:
+        drp = grav_mod.drape(gravity, extent, ground)
+        trace, layers["gravity"] = gravity_layer(drp)
+        idx.gravity = len(traces)
+        traces.append(trace)
+
     survey = None
     if ip is not None:
         survey = geophys.clip(ip, extent)
@@ -592,15 +651,19 @@ def main(argv=None) -> int:
     p.add_argument("--margin", type=float, default=500.0)
     p.add_argument("--max-informing", type=int, default=MAX_INFORMING)
     p.add_argument("--ip", default=None, help="IP-resistivity inversion csv")
+    p.add_argument("--gravity", default=None, help="1982 gravity grid csv")
     p.add_argument("-o", "--out", default="regional.html")
     a = p.parse_args(argv)
 
     data = dataio.load(a.assays, a.baseline, a.sims, a.manifest)
     ground = terrain_mod.load(a.dem, a.dem_cache)
     r = build(data, ground, a.margin, max_informing=a.max_informing,
-              ip=geophys.load(a.ip) if a.ip else None)
+              ip=geophys.load(a.ip) if a.ip else None,
+              gravity=grav_mod.load(a.gravity) if a.gravity else None)
     if r["survey"] is not None:
         print(f"ip           {r['survey'].note()}")
+    if "gravity" in r["layers"]:
+        print(f"gravity      {r['layers']['gravity']['props'][0]['note']}")
     fig, idx, extent, exg = (r["figure"], r["traces"], r["extent"],
                              r["exaggeration"])
     flight = scn.flight(extent, data.box, exg)

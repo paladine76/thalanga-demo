@@ -5,6 +5,7 @@ pandas>=2.0
 pyarrow>=14.0
 plotly>=6.0
 matplotlib>=3.8
+scipy>=1.11          # gravity.py: samples the terrain under the gravity grid
 
 # Verification only; not needed to build or view.
 # playwright>=1.40

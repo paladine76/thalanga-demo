@@ -82,9 +82,9 @@ h1 { font-size: 1.42rem; font-weight: 600; letter-spacing: -.01em; line-height: 
 .layerrow { display: flex; gap: .45rem; }
 .layerrow > #segFill { flex: 1 1 auto; display: flex; }
 .layerrow > .toggle { flex: 0 0 auto; display: flex; }
-#segIP { display: flex; }
-#ipNote { font-family: var(--font-mono); font-size: .7rem; color: var(--muted);
-          line-height: 1.5; }
+#segIP, #segGrav { display: flex; }
+#ipNote, #gravNote { font-family: var(--font-mono); font-size: .7rem; color: var(--muted);
+                     line-height: 1.5; }
 
 .scale { font-family: var(--font-mono); font-size: .7rem; color: var(--muted);
          margin: 0; line-height: 1.4; }
@@ -113,10 +113,10 @@ h1 { font-size: 1.42rem; font-weight: 600; letter-spacing: -.01em; line-height: 
   .controls { gap: .75rem; padding-top: .85rem; }
   .ladder { padding-top: .85rem; }
   .notes { padding-top: .85rem; }
-  /* With Resistivity on, its switch and note need about 90 px, which a
-     window this short does not have spare. The blind-panel count sentence
-     steps aside while it is on and returns when it is off. */
-  .rail.ip-on .ladder { display: none; }
+  /* With Resistivity or Gravity on, its switch and note need about 90 px,
+     which a window this short does not have spare. The blind-panel count
+     sentence steps aside while either is on and returns when both are off. */
+  .rail.layer-on .ladder { display: none; }
 }
 
 /* Fitting, applied by fitRail() only when the rail would otherwise overflow.
@@ -166,9 +166,12 @@ h1 { font-size: 1.42rem; font-weight: 600; letter-spacing: -.01em; line-height: 
         <div class="layerrow">
           <div class="seg" id="segFill" role="group" aria-label="Ground"></div>
           <div class="seg toggle" id="ipToggle"><button type="button" id="ipBtn" aria-pressed="false">Resistivity</button></div>
+          <div class="seg toggle" id="gravToggle"><button type="button" id="gravBtn" aria-pressed="false">Gravity</button></div>
         </div>
         <div class="seg" id="segIP" role="group" aria-label="Resistivity property" hidden></div>
         <div id="ipNote" hidden></div>
+        <div class="seg" id="segGrav" role="group" aria-label="Gravity product" hidden></div>
+        <div id="gravNote" hidden></div>
       </div>
       <div class="field">
         <span class="flabel">The blind panel</span>
@@ -198,6 +201,12 @@ h1 { font-size: 1.42rem; font-weight: 600; letter-spacing: -.01em; line-height: 
          each survey line. One property is shown at a time. Darker means more
          anomalous: higher chargeability, or lower resistivity. Only the parts
          of the survey that fall inside this scene are drawn.</p>
+      <p id="gravAbout"><b>Gravity</b> drapes the 1982 ground gravity survey,
+         as reprocessed in 2021, over the terrain. Residual and band pass are
+         in mGal, violet for lows and slate for highs; tilt is an angle that
+         traces edges and structure. The 2021 survey west of the deposit is not
+         shown, because the two disagree where they overlap. Gravity and
+         Resistivity are shown one at a time.</p>
     </details>
   </aside>
 
@@ -220,7 +229,7 @@ h1 { font-size: 1.42rem; font-weight: 600; letter-spacing: -.01em; line-height: 
   var IDX = RAW.traces, F = RAW.flight, METALS = RAW.metals;
   var gd = document.getElementById("plot");
   var LAY = RAW.layers, TGT = LAY.targets, ZN = LAY.zones, AS = LAY.associated,
-      IPL = LAY.ip;
+      IPL = LAY.ip, GRV = LAY.gravity;
 
   var ACTS = [
     { label: "Descriptive", tag: "Grade by position" },
@@ -236,7 +245,7 @@ h1 { font-size: 1.42rem; font-weight: 600; letter-spacing: -.01em; line-height: 
   var TARGETS = MODES.map(function (m) { return m.key; }).indexOf("targets");
 
   var state = { act: 0, mode: TARGETS, metal: 0, assoc: 0, filled: false,
-                ip: false, ipProp: 0, flying: false };
+                ip: false, ipProp: 0, grav: false, gravProp: 0, flying: false };
   function modeKey() { return MODES[state.mode].key; }
 
   // ---- data, decoded once ------------------------------------------------
@@ -424,9 +433,9 @@ h1 { font-size: 1.42rem; font-weight: 600; letter-spacing: -.01em; line-height: 
     var args = {};
     Object.keys(style).forEach(function (k) { args[k] = [style[k]]; });
     // The wireframe is a single grey, so its elevation scale would describe a
-    // colouring that is not on screen. The IP bar takes the same slot, so the
-    // elevation bar also steps aside while the survey is on.
-    args["showscale"] = [state.filled && !state.ip];
+    // colouring that is not on screen. The IP and gravity bars take the same
+    // slot, so the elevation bar also steps aside while either survey is on.
+    args["showscale"] = [state.filled && !state.ip && !state.grav];
     Plotly.restyle(gd, args, [IDX.dem]);
   }
 
@@ -445,11 +454,35 @@ h1 { font-size: 1.42rem; font-weight: 600; letter-spacing: -.01em; line-height: 
       "marker.colorbar.tickvals": [p.tickvals],
       "marker.colorbar.ticktext": [p.ticktext]
     }, [IDX.ip]);
-    Plotly.restyle(gd, { showscale: [state.filled && !state.ip] }, [IDX.dem]);
+    Plotly.restyle(gd, { showscale: [state.filled && !state.ip && !state.grav] }, [IDX.dem]);
     document.getElementById("ipBtn").setAttribute("aria-pressed", String(state.ip));
     document.getElementById("segIP").hidden = !state.ip;
     document.getElementById("ipNote").hidden = !state.ip;
-    document.querySelector(".rail").classList.toggle("ip-on", state.ip);
+    layerClass();
+  }
+
+  // ---- Gravity ------------------------------------------------------------
+  // A surface draped over the terrain. It shares the upper colour-bar slot
+  // with Resistivity and the elevation bar, so it is shown one at a time.
+  function applyGrav() {
+    if (IDX.gravity < 0) return;
+    var p = GRV.props[state.gravProp];
+    Plotly.restyle(gd, {
+      visible: [state.grav], surfacecolor: [p.color], customdata: [p.color],
+      cmin: [p.cmin], cmax: [p.cmax],
+      "colorbar.title.text": [p.title],
+      hovertemplate: ["%{x:.0f}E %{y:.0f}N<br>" + p.hover + "<extra>gravity 1982</extra>"]
+    }, [IDX.gravity]);
+    Plotly.restyle(gd, { showscale: [state.filled && !state.ip && !state.grav] }, [IDX.dem]);
+    document.getElementById("gravBtn").setAttribute("aria-pressed", String(state.grav));
+    document.getElementById("segGrav").hidden = !state.grav;
+    document.getElementById("gravNote").hidden = !state.grav;
+    document.getElementById("gravNote").textContent = p.note;
+    layerClass();
+  }
+
+  function layerClass() {
+    document.querySelector(".rail").classList.toggle("layer-on", state.ip || state.grav);
     fitRail();
   }
 
@@ -541,7 +574,9 @@ h1 { font-size: 1.42rem; font-weight: 600; letter-spacing: -.01em; line-height: 
         function () { return state.filled ? 1 : 0; });
     if (IDX.ip >= 0) {
       document.getElementById("ipBtn").addEventListener("click", function () {
-        state.ip = !state.ip; applyIP();
+        state.ip = !state.ip;
+        if (state.ip && state.grav) { state.grav = false; applyGrav(); }
+        applyIP();
       });
       seg(document.getElementById("segIP"), ["Chargeability", "Resistivity"],
           function (i) { state.ipProp = i; applyIP(); },
@@ -551,6 +586,19 @@ h1 { font-size: 1.42rem; font-weight: 600; letter-spacing: -.01em; line-height: 
       // Built without the survey: no button, and no paragraph describing it.
       document.getElementById("ipToggle").hidden = true;
       document.getElementById("ipAbout").hidden = true;
+    }
+    if (IDX.gravity >= 0) {
+      document.getElementById("gravBtn").addEventListener("click", function () {
+        state.grav = !state.grav;
+        if (state.grav && state.ip) { state.ip = false; applyIP(); }
+        applyGrav();
+      });
+      seg(document.getElementById("segGrav"), GRV.props.map(function (q) { return q.label; }),
+          function (i) { state.gravProp = i; applyGrav(); },
+          function () { return state.gravProp; });
+    } else {
+      document.getElementById("gravToggle").hidden = true;
+      document.getElementById("gravAbout").hidden = true;
     }
     document.getElementById("go").addEventListener("click", fly);
 
@@ -593,6 +641,7 @@ h1 { font-size: 1.42rem; font-weight: 600; letter-spacing: -.01em; line-height: 
     applyAct();
     applyFill();
     applyIP();
+    applyGrav();
     applyHash();
     // responsive:true watches the window. The rail is a fixed width, so the
     // window is the only thing that resizes the cell — except when the notes

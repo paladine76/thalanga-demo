@@ -14,6 +14,7 @@ Each one is found by shape, so names do not have to match:
     data/thalanga_modelling_manifest.json      *manifest*.json
     data/thalanga_3d.html                      *.html
     data/Dipole-Dipole_IP-Res_..._data.csv     *IP*.csv         (optional)
+    data/Gravity_1982_Grid_Point_data.csv      *Gravity*1982*.csv (optional)
 
 The two cubes are the one case where the name matters, because both are .npz
 and the build has to tell them apart. A cube named something else is pointed
@@ -21,8 +22,8 @@ at with --sims or --ndp.
 
 Leaving the diffusion cube out is supported: the panel page then builds the
 three views it had before diffusion existed, and says so as it goes. Leaving
-the IP survey out is supported too: the regional page then has no Resistivity
-layer.
+the IP survey or the gravity grids out is supported too: the regional page
+then has no Resistivity or no Gravity layer.
 
 Any input can still be pointed at directly with --assays, --dem and so on,
 and --data moves the whole folder.
@@ -42,8 +43,8 @@ WHAT THE SHELL IS GIVEN
 `regional.py` produces the figure; the shell drives it. The payload carries the
 figure itself, the trace map so the page never counts indices by hand, both
 surface states already flattened into restyle paths, the flight plan, and
-under `layers` the colouring of each drilling view (Targets, Zone, Associated)
-and the IP survey's two properties.
+under `layers` the colouring of each drilling view (Targets, Zone, Associated),
+the IP survey's two properties and the three gravity grids.
 
 The flight's destination is fixed at build time and its origin is not: the
 camera starts wherever the viewer has rotated to, so only the target can be
@@ -60,6 +61,7 @@ from pathlib import Path
 import dataio
 import fonts
 import geophys
+import gravity as grav_mod
 import palette
 import panel_page
 import regional
@@ -85,10 +87,11 @@ SCALE = ("{n:,} assay positions over {extent} · vertical exaggeration "
 # the one place a file cannot be called anything at all. A cube that does not
 # say which method produced it has to be pointed at with --sims or --ndp.
 #
-# The third field is whether the build needs it. The diffusion cube and the
-# IP survey are optional: without the cube the panel page builds its three
-# original views, and without the survey the regional page has no Resistivity
-# layer. The build says which, rather than failing.
+# The third field is whether the build needs it. The diffusion cube, the IP
+# survey and the gravity grids are optional: without the cube the panel page
+# builds its three original views, and without either survey the regional page
+# has no Resistivity or no Gravity layer. The build says which, rather than
+# failing.
 INPUTS = {
     "assays": ("*modelling*.parquet", "the assay table with X, Y, Z and grades", True),
     "baseline": ("*baseline*.parquet", "ordinary kriging and the simpler estimates", True),
@@ -97,6 +100,7 @@ INPUTS = {
     "manifest": ("*manifest*.json", "the blind-panel extent", True),
     "dem": ("*.html", "the ground surface, from dxf_surface_3d.py", True),
     "ip": ("*IP*.csv", "the dipole-dipole IP and resistivity inversion", False),
+    "gravity": ("*Gravity*1982*.csv", "the 1982 ground gravity grids", False),
 }
 
 
@@ -201,6 +205,8 @@ def parse_args(argv=None):
     p.add_argument("--dem", default=None, help="override discovery")
     p.add_argument("--ip", default=None,
                    help="override discovery; optional, the IP-resistivity csv")
+    p.add_argument("--gravity", default=None,
+                   help="override discovery; optional, the 1982 gravity csv")
     p.add_argument("--dem-cache", default="dist/.terrain.npz",
                    help="npz cache so later builds skip re-reading the DEM")
     p.add_argument("--out", default="dist")
@@ -238,17 +244,22 @@ def main(argv=None) -> int:
     ground = terrain_mod.load(paths["dem"], args.dem_cache)
 
     ip = geophys.load(paths["ip"]) if "ip" in paths else None
+    gravity = grav_mod.load(paths["gravity"]) if "gravity" in paths else None
 
     print("\nregional page")
     result = regional.build(data, ground, args.margin,
                             max_informing=args.max_informing,
-                            with_controls=False, ip=ip)
+                            with_controls=False, ip=ip, gravity=gravity)
     print(f"  scene        {result['extent'].describe()}")
     print(f"  exaggeration x{result['exaggeration']:.2f} (verified)")
     print(f"  drilling     {', '.join(result['metals'])}"
           + (", zone" if "zones" in result["layers"] else "")
           + (f", {len(result['layers']['associated']['elements'])} associated"
              if "associated" in result["layers"] else ""))
+    if "gravity" in result["layers"]:
+        print(f"  gravity      {result['layers']['gravity']['props'][0]['note']}")
+    else:
+        print("  gravity      -- not supplied, no Gravity layer")
     if result["survey"] is not None:
         print(f"  ip           {result['survey'].note()}")
     else:

@@ -29,10 +29,15 @@ Drilling switch colours them three ways:
   not-assayed and below-detection intervals drawn apart from the measured ones.
 
 The Layers switch draws the ground as a wireframe or a contoured surface, and
-**Resistivity** adds the dipole-dipole IP and resistivity inversion as vertical
-sections beneath the survey lines, chargeability or resistivity, one at a time.
-This act establishes what the drilling and the survey actually found before any
-modelling is mentioned.
+adds one of two geophysical surveys:
+
+- **Resistivity**: the dipole-dipole IP and resistivity inversion as vertical
+  sections beneath the survey lines, chargeability or resistivity.
+- **Gravity**: the 1982 ground gravity survey draped over the terrain, as a
+  residual, a band pass or a tilt angle.
+
+This act establishes what the drilling and the surveys actually found before
+any modelling is mentioned.
 
 **2 · The blind panel (Predictive).** The same scene, recoloured. A prism of
 ground 548 m by 328 m and 960 m deep is set aside and never used. The panel is
@@ -64,6 +69,7 @@ There is no server, no JavaScript build step and no framework.
 | regional 3D | plotly 7.x (`Surface`, `Scatter3d`, `Mesh3d`) | rotatable scene with no custom rendering |
 | panel 3D | plotly 7.x (`Scatter3d`) | same stack as the regional page, so the camera hands over without conversion |
 | colour ramps | matplotlib colormaps | sampled to plotly colourscales; not used for plotting |
+| gravity drape | scipy (`RegularGridInterpolator`) | samples the terrain elevation under each gravity cell |
 | typography | IBM Plex, subset and inlined as data URIs | no webfont request, so the pages render identically offline |
 | verification | Playwright + Chromium | dev only; renders both pages headless and checks them |
 
@@ -108,12 +114,13 @@ thalanga-demo/
 ├── dataio.py           loads and aligns the assay and estimate tables, zones, associated elements
 ├── censor.py           the below-detection rule, applied per element and per file
 ├── geophys.py          loads the IP-resistivity inversion and clips it to the scene
+├── gravity.py          loads the 1982 gravity grids and drapes them over the terrain
 ├── terrain.py          loads, crops and caches the ground surface
 ├── palette.py          one palette for both pages
 ├── fonts.py            reads assets/fonts/ and emits @font-face data URIs
 ├── scene.py            shared scale, exaggeration, camera, flight
 ├── scorecard.py        grade-tonnage, head grade, calibration, swath
-├── regional.py         acts 1 and 2: DEM, drilling views, IP survey, blind panel, box
+├── regional.py         acts 1 and 2: DEM, drilling views, IP and gravity surveys, blind panel, box
 ├── panel_page.py       act 3: payload and page for the blind panel
 ├── templates/
 │   ├── shell.html      regional page: controls, flight, narrative
@@ -133,6 +140,8 @@ checked without building the whole site:
   below-detection rule finds in each associated element.
 - `python geophys.py data/<ip csv> --box ...` reports the survey lines and what
   falls inside a given scene.
+- `python gravity.py data/<gravity csv> --box ...` reports the three gravity
+  grids and how many cells fall inside a given scene.
 - `python terrain.py ... --crop ...` reports what survives the crop.
 - `python palette.py` runs the colour-vision checks.
 - `python fonts.py` reports the subset sizes.
@@ -159,6 +168,7 @@ The pipeline artifacts stay outside the repo, in `data/`.
 | `ndp_realizations_all_1.npz` | 12,985 × 100 Neural Diffusion Process draws per element, plus a `row` key (optional) |
 | `thalanga_modelling_manifest.json` | blind-panel extent, run provenance |
 | `Dipole-Dipole_IP-Res_Inversion_Point_data.csv` | 8,648 IP-resistivity inversion points on 10 lines (optional) |
+| `Gravity_1982_Grid_Point_data.csv` | 46,068 cells of 18 gravity grids at 20 m, one column per grid (optional) |
 
 The ground surface is the odd one out. It arrives as the plotly figure
 `dxf_surface_3d.py` already writes, because that is where the gridded DEM
@@ -235,6 +245,35 @@ The unit of chargeability is not stated in the file and the page shows none.
 `ResErr` and `IPErr` are undocumented and not used. Colour limits are the 2nd to
 98th percentile of what is drawn: chargeability 0.07 to 41.0, resistivity 9.1 to
 10,000 Ω·m on a log scale.
+
+### The gravity survey
+
+`Gravity_1982_Grid_Point_data.csv` holds 18 Geosoft grids of the 1982 ground
+gravity survey as reprocessed by McInnes (2021), terrain corrected at 2.62 g/cc,
+written out one row per grid cell. The grids carry no projection; the
+data-sources workbook files all gravity under GDA94 / MGA zone 55. The page
+drapes three grids from the 90 m stream over the terrain:
+
+| switch | grid | unit |
+|---|---|---|
+| Residual | `Thal_EW_2nd_DS_0090p0` | mGal |
+| Band pass | `Thal_EW_2nd_DS_0090p0_Bp` | mGal |
+| Tilt | `Thal_EW_2nd_DS_0090p0_Bp_Tilt` | degrees |
+
+The grids carry no units either. mGal comes from the memo, and reading
+`0090p0` as a 90 m filter comes from the file name. 41,252 of the 46,068 cells
+fall inside the scene, over all but 75 of the 77,220 drill positions. The drape
+sits 4 m above the ground and never above the top of the scene, so it cannot
+change the scene's extent. The mGal grids are coloured symmetrically about
+zero, out to the 98th percentile of the magnitude drawn.
+
+A 2021 survey also exists, as 16 grids covering a strip west of the deposit
+that reaches only a tenth of the scene. It is not drawn. Where the two surveys
+overlap (1.7 km²) they correlate at 0.06, and the 2021 mGal grids vary 3.6 to
+10 times less than the 1982 ones, so a merged map would show a seam and a
+change of scale that are not in the ground. The memo places the ore systems in
+gravity lows; across the deposit in the 1982 grids, mineralised intervals sit
+near the middle of the value range instead.
 
 ---
 
@@ -326,10 +365,14 @@ The descriptive layers have their own colours, all defined in `palette.py`:
 | associated elements | the hues of the pipeline's 06c figure, each as a ramp from a pale tint to a dark shade on a log scale |
 | not assayed, below detection | two greys; below detection is also drawn as × |
 | IP survey | pale lemon to near-black; dark is high chargeability or low resistivity |
+| gravity | violet for lows, white at zero, slate for highs |
 
 `python palette.py` also checks these layers. The IP ramp stays at least ΔE
 15.8 from the metals, the panel colour and the greys under normal, deutan and
-protan vision, and the zones at least ΔE 31.6 from each other. The associated
+protan vision, and the zones at least ΔE 31.6 from each other. The gravity
+ramp comes within ΔE 8.1 of Zn: every diverging ramp tried came within ΔE 10
+of some colour among the metals, zones and greys, and this one keeps the most
+distance from the metals and the panel colour. The associated
 ramps do not clear ΔE 10 against the two greys: the pale ends sit close to the
 not-assayed grey and Fe's middle shades close to the below-detection grey.
 Marker size and the × symbol carry that distinction on the page.
@@ -357,20 +400,22 @@ name, so `data/` can hold whatever the pipeline called them:
 | `*manifest*.json` | the blind-panel extent |
 | `*.html` | the ground surface from `dxf_surface_3d.py` |
 | `*IP*.csv` | the IP-resistivity inversion (optional) |
+| `*Gravity*1982*.csv` | the 1982 gravity grids (optional) |
 
 A missing or ambiguous required file stops the build and says which one. The
-two optional inputs can be left out: without the NDP cube the panel page has
-three views, and without the IP survey the regional page has no Resistivity
-layer. Any input can still be pointed at directly with `--assays`, `--ndp`,
-`--ip` and so on, and `--data` moves the whole folder.
+three optional inputs can be left out: without the NDP cube the panel page has
+three views, and without the IP survey or the gravity grids the regional page
+has no Resistivity or no Gravity layer. Any input can still be pointed at
+directly with `--assays`, `--ndp`, `--ip`, `--gravity` and so on, and `--data`
+moves the whole folder.
 
 Then open `dist/index.html`.
 
 ### Payload budget
 
 The regional page carries the DEM, the 77,220 positions once, the colouring
-for every drilling view, the IP survey and the blind-panel act: 13.4 MB with
-plotly embedded. The panel page carries 12,967 positions and six realisations
+for every drilling view, the IP survey, the gravity drape and the blind-panel
+act: 15.5 MB with plotly embedded. The panel page carries 12,967 positions and six realisations
 from each ensemble across three metals: 8.6 MB with plotly embedded. Neither
 page loads the other's data.
 
@@ -387,20 +432,23 @@ Summary curves are computed at build time and arrive as a few kilobytes.
 | `dataio.py` | done; reproduces the circulated figures exactly; loads zones and associated elements |
 | `censor.py` | done; the rule's reference implementation verbatim, plus the at-limit flag and the presence-only call |
 | `geophys.py` | done; survey checked on load, clipped to the scene |
+| `gravity.py` | done; grids checked on load, draped inside the scene |
 | `terrain.py` | done; caches the DEM, crop verified |
-| `palette.py` | done; metal check passes, closest pair ΔE 13.9; layer check reports the associated/grey closeness above |
+| `palette.py` | done; metal check passes, closest pair ΔE 13.9; layer check reports the gravity/Zn and associated/grey closeness above |
 | `fonts.py` | done; 148 kB of woff2 subsets, no external request |
 | `scene.py` | done; camera mapping verified against rendered pixels |
 | `scorecard.py` | done; all four comparisons, 4.6 kB payload — not imported by the build |
-| `regional.py` | done; one drilling trace for every view, IP survey, both acts, box click verified |
+| `regional.py` | done; one drilling trace for every view, IP and gravity surveys, both acts, box click verified |
 | `panel_page.py` + `templates/panel.html` | done; one scene, four views, fits one viewport |
 | `templates/shell.html` | done; Descriptive/Predictive, Drilling and Layers controls, flight, camera handover, fits one viewport |
-| `build.py` | done; both pages in about 3 s from a warm DEM cache |
+| `build.py` | done; both pages in about 5 s from a warm DEM cache |
 
 Both pages were rendered headless at 1920×1080, 1600×900, 1536×864, 1440×900,
 1366×768 and 1280×720 with the notes collapsed. Neither scrolls at any of
-them: the regional page in every drilling view with Resistivity on and off, the
-panel page in all four views. Opening the notes may scroll the rail, by design.
+them: the regional page in every drilling view with Resistivity on and off and
+with Gravity on, the panel page in all four views. Opening the notes may scroll
+the rail, by design. The scene's axis ranges are the same with Gravity on and
+off.
 
 What remains:
 
@@ -411,13 +459,15 @@ What remains:
   sections over the drilling in every view. The approved preview drew them
   over the metals but under the Zone and Associated colouring.
 - The Fe values in TH703, TH705 and TH717, to be corrected upstream.
+- The units and filter wavelengths of the gravity grids, read here from the
+  memo and the file names, to be confirmed with the processor.
 
 ### Known risk
 
-The regional page is 13.4 MB, nearly all of it plotly plus the positions and
-their colouring. It opens fine from disk and from a static host, but it is slow
+The regional page is 15.5 MB, nearly all of it plotly plus the positions, their
+colouring and the gravity drape. It opens fine from disk and from a static host, but it is slow
 enough over a hotel connection to be worth testing before a live showing.
 Building with `--cdn` leaves plotly out of both pages, 4.8 MB each, which
-brings the regional page to 8.6 MB and the panel page to 3.8 MB. The cost is
+brings the regional page to 10.6 MB and the panel page to 3.8 MB. The cost is
 needing internet, which is the wrong trade for a demo that may be shown on
 site.

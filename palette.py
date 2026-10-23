@@ -50,6 +50,11 @@ pale tint through its own hue to a darker shade of it.
 The IP ramp runs pale lemon to near-black. It is shown with the metals hidden
 or beside them, so it has to stay apart from all three metal hues and from the
 panel colour and the greys. `check_layers()` measures that.
+
+The gravity ramp diverges from white at zero, violet for lows and slate for
+highs. Every diverging ramp tried came within ΔE 10 of some colour among the
+metals, zones and greys; this one keeps the most distance from the metals and
+the panel colour, at worst ΔE 8.1 against Zn, and `check_layers()` reports it.
 """
 from __future__ import annotations
 
@@ -116,6 +121,14 @@ NOT_ASSAYED_SIZE = 1.6
 IP_RAMP = [[0.0, "#FAF3B5"], [0.333, "#BFB25A"], [0.667, "#5E5830"],
            [1.0, "#141410"]]
 IP_MARKER = dict(size=2.0, symbol="square", opacity=0.6)
+
+# Gravity, a diverging ramp centred on white at zero: violet for lows, slate
+# for highs. Lows get the stronger hue because the gravity memo (McInnes,
+# 2021) places the Thalanga ore systems in localised lows. Gravity and the IP
+# survey are never on screen together, so this ramp is checked against the
+# metals and the panel colour, not against the IP ramp.
+GRAVITY_RAMP = [[0.0, "#3D2463"], [0.25, "#A196C6"], [0.5, "#F7F7F7"],
+                [0.75, "#8C9AA6"], [1.0, "#2F3B45"]]
 
 
 # --------------------------------------------------------------------------- #
@@ -317,8 +330,10 @@ def check_layers(floor: float = 10.0) -> bool:
              for i, s in enumerate(associated_ramp(e))}
     greys = {"not assayed": NOT_ASSAYED, "below detection": BELOW_DL}
 
+    grav = {f"gravity step {i}": c for i, c in enumerate(_samples(GRAVITY_RAMP))}
     rows = [("IP ramp / metals", _closest(ip, metals)),
-            ("IP ramp / panel and greys", _closest(ip, others))]
+            ("IP ramp / panel and greys", _closest(ip, others)),
+            ("gravity ramp / metals, panel", _closest(grav, {**metals, "panel": BLIND_PANEL}))]
     labels = list(zones)
     pairs = [_closest({a: zones[a]}, {b: zones[b]})
              for i, a in enumerate(labels) for b in labels[i + 1:]]
